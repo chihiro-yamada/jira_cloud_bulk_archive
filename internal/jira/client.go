@@ -31,10 +31,9 @@ type IssueFields struct {
 
 // SearchResult represents the result of a JQL search
 type SearchResult struct {
-	Issues     []Issue `json:"issues"`
-	Total      int     `json:"total"`
-	StartAt    int     `json:"startAt"`
-	MaxResults int     `json:"maxResults"`
+	Issues        []Issue `json:"issues"`
+	Total         int     `json:"total"`
+	NextPageToken string  `json:"nextPageToken,omitempty"`
 }
 
 // NewClient creates a new JIRA API client
@@ -49,14 +48,17 @@ func NewClient(baseURL, email, apiToken string) *Client {
 	}
 }
 
-// SearchIssues searches for issues using JQL
-func (c *Client) SearchIssues(jql string, startAt, maxResults int) (*SearchResult, error) {
-	endpoint := fmt.Sprintf("%s/rest/api/3/search", c.baseURL)
+// SearchIssues searches for issues using JQL with the new search/jql endpoint
+func (c *Client) SearchIssues(jql, nextPageToken string, maxResults int) (*SearchResult, error) {
+	endpoint := fmt.Sprintf("%s/rest/api/3/search/jql", c.baseURL)
 
 	params := url.Values{}
 	params.Add("jql", jql)
-	params.Add("startAt", fmt.Sprintf("%d", startAt))
 	params.Add("maxResults", fmt.Sprintf("%d", maxResults))
+
+	if nextPageToken != "" {
+		params.Add("nextPageToken", nextPageToken)
+	}
 
 	fullURL := fmt.Sprintf("%s?%s", endpoint, params.Encode())
 
@@ -119,23 +121,23 @@ func (c *Client) GetAllIssuesByLabel(projectKey, label string) ([]Issue, error) 
 	jql := fmt.Sprintf("project = %s AND labels = %s", projectKey, label)
 
 	var allIssues []Issue
-	startAt := 0
+	nextPageToken := ""
 	maxResults := 100 // JIRA's recommended batch size
 
 	for {
-		result, err := c.SearchIssues(jql, startAt, maxResults)
+		result, err := c.SearchIssues(jql, nextPageToken, maxResults)
 		if err != nil {
 			return nil, err
 		}
 
 		allIssues = append(allIssues, result.Issues...)
 
-		// Check if we've retrieved all issues
-		if startAt+len(result.Issues) >= result.Total {
+		// Check if there are more pages
+		if result.NextPageToken == "" {
 			break
 		}
 
-		startAt += maxResults
+		nextPageToken = result.NextPageToken
 	}
 
 	return allIssues, nil
