@@ -7,6 +7,7 @@ import (
 	"github.com/c_yamada/jira_cloud_bulk_archive/internal/config"
 	"github.com/c_yamada/jira_cloud_bulk_archive/internal/jira"
 	"github.com/c_yamada/jira_cloud_bulk_archive/pkg/worker"
+	"github.com/joho/godotenv"
 )
 
 func main() {
@@ -14,6 +15,13 @@ func main() {
 	log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile)
 
 	log.Println("Starting JIRA Cloud Bulk Archive Tool")
+
+	// Load .env file if it exists
+	if err := godotenv.Load(); err != nil {
+		log.Println("No .env file found, using system environment variables")
+	} else {
+		log.Println("Loaded configuration from .env file")
+	}
 
 	// Load configuration from environment variables
 	cfg, err := config.Load()

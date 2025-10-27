@@ -45,15 +45,14 @@ cp .env.example .env
 
 ## 実行
 
-環境変数を設定してから実行:
+.envファイルを使用する場合（推奨）:
 
 ```bash
-# .envファイルを使用する場合
-export $(cat .env | xargs)
+# .envファイルを作成・編集した後
 go run ./cmd/archive
 ```
 
-または環境変数を直接指定:
+環境変数を直接指定する場合:
 
 ```bash
 JIRA_BASE_URL=https://your-domain.atlassian.net \
@@ -64,6 +63,8 @@ ARCHIVE_LABEL=archive \
 MAX_WORKERS=5 \
 go run ./cmd/archive
 ```
+
+**注**: godotenvを使用しているため、.envファイルがあれば自動的に読み込まれます。.envファイルが無い場合はシステムの環境変数が使用されます。
 
 ## プロジェクト構造
 
