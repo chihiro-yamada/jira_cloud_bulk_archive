@@ -1,0 +1,2 @@
+# jira_cloud_bulk_archive
+JIRA Cloudで任意のラベルが付与されている課題を一斉アーカイブするスクリプトです。
