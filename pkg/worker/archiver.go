@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"log"
 	"strings"
-	"sync"
 
 	"github.com/c_yamada/jira_cloud_bulk_archive/internal/jira"
 )
@@ -16,21 +15,21 @@ type ArchiveResult struct {
 	Error    error
 }
 
-// Archiver handles concurrent archiving of JIRA issues
+// Archiver handles bulk archiving of JIRA issues
 type Archiver struct {
-	client     *jira.Client
-	maxWorkers int
+	client    *jira.Client
+	batchSize int
 }
 
 // NewArchiver creates a new Archiver
-func NewArchiver(client *jira.Client, maxWorkers int) *Archiver {
+func NewArchiver(client *jira.Client, _ int) *Archiver {
 	return &Archiver{
-		client:     client,
-		maxWorkers: maxWorkers,
+		client:    client,
+		batchSize: 1000, // Archive up to 1000 issues per batch
 	}
 }
 
-// ArchiveIssues archives multiple issues concurrently using goroutines
+// ArchiveIssues archives multiple issues using bulk API
 func (a *Archiver) ArchiveIssues(issues []jira.Issue) []ArchiveResult {
 	totalIssues := len(issues)
 	if totalIssues == 0 {
@@ -38,62 +37,82 @@ func (a *Archiver) ArchiveIssues(issues []jira.Issue) []ArchiveResult {
 		return []ArchiveResult{}
 	}
 
-	log.Printf("Starting to archive %d issues with %d workers\n", totalIssues, a.maxWorkers)
+	log.Printf("Starting to archive %d issues using bulk API (batch size: %d)\n", totalIssues, a.batchSize)
 
-	// Create channels for job distribution and result collection
-	jobs := make(chan jira.Issue, totalIssues)
-	results := make(chan ArchiveResult, totalIssues)
+	// Split issues into batches
+	batches := a.createBatches(issues)
+	log.Printf("Created %d batches\n", len(batches))
 
-	// Start worker goroutines
-	var wg sync.WaitGroup
-	for i := 0; i < a.maxWorkers; i++ {
-		wg.Add(1)
-		go a.worker(i+1, &wg, jobs, results)
+	// Process each batch sequentially
+	var allResults []ArchiveResult
+	for batchNum, batch := range batches {
+		log.Printf("Processing batch %d/%d (%d issues)\n", batchNum+1, len(batches), len(batch))
+		batchResults := a.processBatch(batch)
+		allResults = append(allResults, batchResults...)
 	}
 
-	// Send jobs to workers
-	for _, issue := range issues {
-		jobs <- issue
-	}
-	close(jobs)
-
-	// Wait for all workers to finish
-	go func() {
-		wg.Wait()
-		close(results)
-	}()
-
-	// Collect results
-	var archiveResults []ArchiveResult
-	for result := range results {
-		archiveResults = append(archiveResults, result)
-	}
-
-	return archiveResults
+	return allResults
 }
 
-// worker is a goroutine that processes archive jobs
-func (a *Archiver) worker(id int, wg *sync.WaitGroup, jobs <-chan jira.Issue, results chan<- ArchiveResult) {
-	defer wg.Done()
-
-	for issue := range jobs {
-		log.Printf("[Worker %d] Archiving issue: %s (%s)\n", id, issue.Key, issue.Fields.Summary)
-
-		err := a.client.ArchiveIssue(issue.Key)
-		result := ArchiveResult{
-			IssueKey: issue.Key,
-			Success:  err == nil,
-			Error:    err,
+// createBatches splits issues into batches of configured size
+func (a *Archiver) createBatches(issues []jira.Issue) [][]jira.Issue {
+	var batches [][]jira.Issue
+	for i := 0; i < len(issues); i += a.batchSize {
+		end := i + a.batchSize
+		if end > len(issues) {
+			end = len(issues)
 		}
-
-		if err != nil {
-			log.Printf("[Worker %d] Failed to archive %s: %v\n", id, issue.Key, err)
-		} else {
-			log.Printf("[Worker %d] Successfully archived %s\n", id, issue.Key)
-		}
-
-		results <- result
+		batches = append(batches, issues[i:end])
 	}
+	return batches
+}
+
+// processBatch processes a single batch of issues using the bulk archive API
+func (a *Archiver) processBatch(batch []jira.Issue) []ArchiveResult {
+	batchSize := len(batch)
+	issueKeys := make([]string, batchSize)
+
+	for i, issue := range batch {
+		issueKeys[i] = issue.Key
+		log.Printf("Batch item %d: Key=%s, ID=%s\n", i, issue.Key, issue.ID)
+	}
+
+	log.Printf("Archiving batch of %d issues\n", batchSize)
+
+	// Call bulk archive API
+	resp, err := a.client.ArchiveIssues(issueKeys)
+
+	// Process results
+	batchResults := make([]ArchiveResult, batchSize)
+	for i, issue := range batch {
+		if err != nil {
+			// Entire batch failed
+			batchResults[i] = ArchiveResult{
+				IssueKey: issue.Key,
+				Success:  false,
+				Error:    err,
+			}
+			log.Printf("Failed to archive %s: %v\n", issue.Key, err)
+		} else if resp != nil && resp.Errors != nil && resp.Errors[issue.Key] != "" {
+			// Individual issue failed
+			batchResults[i] = ArchiveResult{
+				IssueKey: issue.Key,
+				Success:  false,
+				Error:    fmt.Errorf("%s", resp.Errors[issue.Key]),
+			}
+			log.Printf("Failed to archive %s: %s\n", issue.Key, resp.Errors[issue.Key])
+		} else {
+			// Success
+			batchResults[i] = ArchiveResult{
+				IssueKey: issue.Key,
+				Success:  true,
+				Error:    nil,
+			}
+			log.Printf("Successfully archived %s\n", issue.Key)
+		}
+	}
+
+	return batchResults
 }
 
 // PrintSummary prints a summary of the archive operation

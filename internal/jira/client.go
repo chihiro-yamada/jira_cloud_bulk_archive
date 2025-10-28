@@ -1,9 +1,11 @@
 package jira
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"time"
@@ -55,12 +57,15 @@ func (c *Client) SearchIssues(jql, nextPageToken string, maxResults int) (*Searc
 	params := url.Values{}
 	params.Add("jql", jql)
 	params.Add("maxResults", fmt.Sprintf("%d", maxResults))
+	params.Add("fields", "summary")
 
 	if nextPageToken != "" {
 		params.Add("nextPageToken", nextPageToken)
 	}
 
 	fullURL := fmt.Sprintf("%s?%s", endpoint, params.Encode())
+
+	log.Printf("fullURL: %s\n", fullURL)
 
 	req, err := http.NewRequest("GET", fullURL, nil)
 	if err != nil {
@@ -89,31 +94,61 @@ func (c *Client) SearchIssues(jql, nextPageToken string, maxResults int) (*Searc
 	return &result, nil
 }
 
-// ArchiveIssue archives a single issue
-func (c *Client) ArchiveIssue(issueIDOrKey string) error {
-	endpoint := fmt.Sprintf("%s/rest/api/3/issue/%s/archive", c.baseURL, issueIDOrKey)
+// ArchiveRequest represents the request body for bulk archiving
+type ArchiveRequest struct {
+	IssueIdsOrKeys []string `json:"issueIdsOrKeys"`
+}
 
-	req, err := http.NewRequest("PUT", endpoint, nil)
+// ArchiveResponse represents the response from bulk archive API
+type ArchiveResponse struct {
+	Errors map[string]string `json:"errors,omitempty"`
+}
+
+// ArchiveIssues archives multiple issues in a single API call
+func (c *Client) ArchiveIssues(issueKeys []string) (*ArchiveResponse, error) {
+	endpoint := fmt.Sprintf("%s/rest/api/3/issue/archive", c.baseURL)
+
+	requestBody := ArchiveRequest{
+		IssueIdsOrKeys: issueKeys,
+	}
+
+	jsonBody, err := json.Marshal(requestBody)
 	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	req, err := http.NewRequest("PUT", endpoint, bytes.NewBuffer(jsonBody))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
 	req.SetBasicAuth(c.email, c.apiToken)
 	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("failed to execute request: %w", err)
+		return nil, fmt.Errorf("failed to execute request: %w", err)
 	}
 	defer resp.Body.Close()
 
-	// Archive API returns 204 No Content on success
-	if resp.StatusCode != http.StatusNoContent {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(body))
+	// Read response body
+	body, _ := io.ReadAll(resp.Body)
+
+	// Archive API returns 200 or 204 on success
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+		return nil, fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(body))
 	}
 
-	return nil
+	// Parse response if there's a body
+	var archiveResp ArchiveResponse
+	if len(body) > 0 {
+		if err := json.Unmarshal(body, &archiveResp); err != nil {
+			return nil, fmt.Errorf("failed to decode response: %w", err)
+		}
+	}
+
+	return &archiveResp, nil
 }
 
 // GetAllIssuesByLabel retrieves all issues with a specific label in a project

@@ -5,8 +5,9 @@ JIRA Cloudで任意のラベルが付与されている課題を一斉アーカ�
 ## 機能
 
 - 指定されたプロジェクトとラベルに基づいて課題を検索
-- goroutineを使用した並列アーカイブ処理
-- 環境変数による設定管理
+- JIRA Cloud Bulk Archive APIを使用した効率的な一括アーカイブ処理
+- 大量の課題を自動的にバッチ分割（デフォルト1000件/バッチ）
+- 環境変数による設定管理（godotenv対応）
 - 詳細なログ出力とサマリーレポート
 
 ## 必要要件
@@ -34,7 +35,7 @@ cp .env.example .env
 - `JIRA_API_TOKEN`: JIRA APIトークン
 - `JIRA_PROJECT_KEY`: 対象プロジェクトのキー
 - `ARCHIVE_LABEL`: アーカイブ対象のラベル名 (デフォルト: archive)
-- `MAX_WORKERS`: 並列処理のワーカー数 (デフォルト: 5)
+- `MAX_WORKERS`: 互換性のため残していますが、現在は使用されていません
 
 ## JIRA APIトークンの取得方法
 
